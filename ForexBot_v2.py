@@ -1,3 +1,4 @@
+import streamlit as st
 from dataclasses import dataclass
 from typing import Literal
 import streamlit as st
@@ -24,21 +25,12 @@ class ChatApplication:
 
         st.title("Forex Trading Advisor:")
         st.subheader("Powered by LangChain 🦜🔗")
-        
+
         self.openai_api_key = os.getenv("OPENAI_API_KEY")
 
-        self.prompt = ChatPromptTemplate.from_messages([
-            SystemMessagePromptTemplate.from_template(
-                """
-                The following is an informative conversation between a human and an AI financial adviser. 
-                The financial adviser will ask lots of questions. The financial adviser will attempt to answer any question asked and will
-                probe for the human's risk appetite by asking questions of its own. If the human's risk appetite is low
-                it will offer conservative financial advice, if the risk appetite of the human is higher it will offer more aggressive advice 
-                """
-            ),
-            MessagesPlaceholder(variable_name="history"),
-            HumanMessagePromptTemplate.from_template("{input}")
-        ])
+        self.chat_placeholder = st.container()
+        self.prompt_placeholder = st.form("chat-form")
+        self.log_placeholder = st.empty()
 
         self.search = SerpAPIWrapper(serpapi_api_key=os.getenv("SERP_API_KEY"))
         self.tools = [
@@ -49,57 +41,10 @@ class ChatApplication:
             )
         ]
 
-        self.load_css()
         self.initialize_session_state()
 
-        self.chat_placeholder = st.container()
-        self.prompt_placeholder = st.form("chat-form")
-        self.log_placeholder = st.empty()
-
-    def load_css(self):
-        with open("static/styles.css", "r") as f:
-            css = f"<style>{f.read()}</style>"
-            st.markdown(css, unsafe_allow_html=True)
-
-    def initialize_session_state(self):
-        if "history" not in st.session_state:
-            st.session_state.history = []
-        if "token_count" not in st.session_state:
-            st.session_state.token_count = 0
-        if "conversation" not in st.session_state:
-            llm = ChatOpenAI(
-                temperature=0,
-                openai_api_key=self.openai_api_key
-            )
-            llm.model_name="gpt-3.5-turbo-0613"           
-            st.session_state.conversation = ConversationChain(
-                self.tools,
-                llm=llm,
-                
-                memory=ConversationBufferMemory(return_messages=True),
-                prompt=self.prompt
-            )
-
-    def on_click_callback(self):
-        with get_openai_callback() as cb:
-            human_prompt = st.session_state.human_prompt
-            history = st.session_state.history
-            llm_response = st.session_state.conversation.predict(
-                input=human_prompt
-            )
-            st.session_state.history.append(
-                Message("human", human_prompt)
-            )
-            st.session_state.history.append(
-                Message("ai", llm_response)
-            )
-            st.session_state.token_count += cb.total_tokens
-            if self.account_balance is not None:  # To ensure the message is only added if user inputs have been submitted
-                st.session_state.history.append(
-                    Message("system", f"Account Balance: {self.account_balance}, Risk Percentage: {self.risk_percentage}, Stop Loss: {self.stop_loss}, Currency Pair: {self.currency_pair}, Current Ask Price: {self.current_ask_price}, Position Size: {self.position_size}")
-                )
-
     def get_user_position_inputs(self):
+        # Side bar for user input
         st.sidebar.title('Forex Trading Details')
 
         with st.sidebar.form(key='user_inputs_form'):
@@ -108,7 +53,7 @@ class ChatApplication:
             stop_loss = st.number_input("Stop Loss (Pips)", min_value=0.0, step=0.01)
             currency_pair = st.text_input("Currency Pair")
             current_ask_price = st.number_input("Current Ask Price", min_value=0.0, step=0.01)
-
+            
             submitted = st.form_submit_button('Submit')
 
         if submitted:
@@ -121,6 +66,48 @@ class ChatApplication:
         else:
             return None, None, None, None, None, None
 
+    def initialize_session_state(self):
+        if "history" not in st.session_state:
+            st.session_state.history = []
+        if "token_count" not in st.session_state:
+            st.session_state.token_count = 0
+        if "agent" not in st.session_state:
+            llm = ChatOpenAI(
+                temperature=0,
+                openai_api_key=self.openai_api_key
+            )
+            llm.model_name="gpt-3.5-turbo-0613"
+            st.session_state.agent = initialize_agent(
+                self.tools,
+                llm,
+                agent=AgentType.CHAT_ZERO_SHOT_REACT_DESCRIPTION, 
+                verbose=True, 
+                memory=ConversationBufferMemory(return_messages=True),
+                handle_parsing_errors=True
+            )
+
+    def on_click_callback(self):
+        with get_openai_callback() as cb:
+            human_prompt = st.session_state.human_prompt
+            history = st.session_state.history
+
+            llm_response = st.session_state.agent.run(
+                    input=human_prompt,
+                    chat_history=history
+                )
+
+            st.session_state.history.append(
+                Message("human", human_prompt)
+            )
+            st.session_state.history.append(
+                Message("ai", llm_response)
+            )
+
+            st.session_state.token_count += cb.total_tokens
+            if self.account_balance is not None:  # To ensure the message is only added if user inputs have been submitted
+                st.session_state.history.append(
+                    Message("system", f"Account Balance: {self.account_balance}, Risk Percentage: {self.risk_percentage}, Stop Loss: {self.stop_loss}, Currency Pair: {self.currency_pair}, Current Ask Price: {self.current_ask_price}, Position Size: {self.position_size}")
+            )
 
     def run(self): 
         self.account_balance, self.risk_percentage, self.stop_loss, self.currency_pair, self.current_ask_price, self.position_size = self.get_user_position_inputs()
@@ -163,7 +150,7 @@ class ChatApplication:
         self.log_placeholder.caption(f"""
     Used {st.session_state.token_count} tokens \n
     Debug Langchain conversation: 
-    {st.session_state.conversation.memory.buffer}
+    {st.session_state.agent.memory.buffer}
     """)
 
 app = ChatApplication()

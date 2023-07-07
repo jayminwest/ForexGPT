@@ -77,8 +77,37 @@ class ChatApplication:
                 Message("ai", llm_response)
             )
             st.session_state.token_count += cb.total_tokens
+            if self.account_balance is not None:  # To ensure the message is only added if user inputs have been submitted
+                st.session_state.history.append(
+                    Message("system", f"Account Balance: {self.account_balance}, Risk Percentage: {self.risk_percentage}, Stop Loss: {self.stop_loss}, Currency Pair: {self.currency_pair}, Current Ask Price: {self.current_ask_price}, Position Size: {self.position_size}")
+                )
 
-    def run(self):
+    def get_user_position_inputs(self):
+        st.sidebar.title('Forex Trading Details')
+
+        with st.sidebar.form(key='user_inputs_form'):
+            account_balance = st.number_input("Account Balance", min_value=0.0, step=0.01)
+            risk_percentage = st.number_input("Risk Percentage", min_value=0.0, max_value=100.0, step=0.1)
+            stop_loss = st.number_input("Stop Loss (Pips)", min_value=0.0, step=0.01)
+            currency_pair = st.text_input("Currency Pair")
+            current_ask_price = st.number_input("Current Ask Price", min_value=0.0, step=0.01)
+
+            submitted = st.form_submit_button('Submit')
+
+        if submitted:
+            # Calculate position size using the inputs
+            risk_amount = account_balance * (risk_percentage / 1000.0)
+            position_size = risk_amount / stop_loss
+            st.sidebar.markdown(f'**Position Size:** {position_size}')
+            
+            return account_balance, risk_percentage, stop_loss, currency_pair, current_ask_price, position_size
+        else:
+            return None, None, None, None, None, None
+
+
+    def run(self): 
+        self.account_balance, self.risk_percentage, self.stop_loss, self.currency_pair, self.current_ask_price, self.position_size = self.get_user_position_inputs()
+        
         with self.chat_placeholder:
             for chat in st.session_state.history:
                 div = f"""
